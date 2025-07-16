@@ -99,11 +99,7 @@ class CassandraTypeMapper:
         # Normalize type name
         base_type = self._extract_base_type(cassandra_type)
 
-        # Check cache
-        if base_type in self._dtype_cache:
-            return self._dtype_cache[base_type]
-
-        # Get dtype
+        # Get dtype from basic type map first
         dtype = self.BASIC_TYPE_MAP.get(base_type, None)
 
         if dtype is None:
@@ -111,19 +107,34 @@ class CassandraTypeMapper:
             if table_metadata and self._is_udt_type(cassandra_type, table_metadata):
                 # Extract keyspace if available
                 keyspace = table_metadata.get("keyspace", "")
+                # Create cache key that includes keyspace for UDTs
+                cache_key = f"{keyspace}.{base_type}" if keyspace else base_type
+
+                # Check cache for UDT
+                if cache_key in self._dtype_cache:
+                    return self._dtype_cache[cache_key]
+
                 dtype = CassandraUDTDtype(keyspace=keyspace, udt_name=base_type)
+                # Cache and return
+                self._dtype_cache[cache_key] = dtype
+                return dtype
             else:
                 dtype = "object"
 
-        # Cache and return
+        # Cache and return non-UDT types
         self._dtype_cache[base_type] = dtype
         return dtype
 
     def _extract_base_type(self, type_str: str) -> str:
         """Extract base type from complex type string."""
-        # Handle frozen types
-        if type_str.startswith("frozen<"):
-            return "frozen"
+        # Handle frozen types - extract the inner type
+        if type_str.startswith("frozen<") and type_str.endswith(">"):
+            inner_type = type_str[7:-1]  # Remove "frozen<" and ">"
+            # For frozen types, we still want to process the inner type
+            # but frozen collections should be treated as regular collections
+            if any(inner_type.startswith(prefix) for prefix in ["list<", "set<", "map<"]):
+                return inner_type.split("<")[0]
+            return inner_type
 
         # Handle parameterized types
         if "<" in type_str:
@@ -402,8 +413,8 @@ class CassandraTypeMapper:
         data = {}
         for col_name, dtype in schema.items():
             if dtype == "object":
-                # Object columns need empty list
-                data[col_name] = pd.Series([], dtype=dtype)
+                # Object columns need empty list with explicit object dtype
+                data[col_name] = pd.Series([], dtype=object)
             elif dtype in [
                 "Int8",
                 "Int16",

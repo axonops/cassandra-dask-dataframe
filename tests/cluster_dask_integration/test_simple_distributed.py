@@ -190,10 +190,14 @@ class TestSimpleDistributed:
                     # Calculate tokens for the data in this partition
                     tokens = []
                     for pk in partition["pk"]:
-                        # Calculate Murmur3 token for integer PK
-                        pk_bytes = struct.pack(">i", pk)
-                        token = Murmur3Token.hash_fn(pk_bytes)
-                        tokens.append(token)
+                        if pd.notna(pk):  # Skip NA values
+                            # Calculate Murmur3 token for integer PK
+                            pk_bytes = struct.pack(">i", pk)
+                            token = Murmur3Token.hash_fn(pk_bytes)
+                            tokens.append(token)
+
+                    if not tokens:
+                        return pd.DataFrame()
 
                     return pd.DataFrame(
                         {

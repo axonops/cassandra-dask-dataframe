@@ -17,6 +17,8 @@ import dask.dataframe as dd
 import pandas as pd
 from dask.distributed import Client
 
+from .connection_config import ConnectionConfig
+from .dask_dtype_registration import _ensure_dtypes_registered
 from .dataframe_factory import DataFrameFactory
 from .event_loop_manager import EventLoopManager
 from .filter_processor import FilterProcessor
@@ -29,6 +31,9 @@ from .query_builder import QueryBuilder
 from .serializers import TTLSerializer, WritetimeSerializer
 from .token_ranges import discover_token_ranges
 from .types import CassandraTypeMapper
+
+# Ensure custom dtypes are registered with Dask
+_ensure_dtypes_registered()
 
 # Configure Dask to not use PyArrow strings by default
 # This preserves object dtypes for things like VARINT
@@ -55,6 +60,7 @@ class CassandraDataFrameReader:
         keyspace: str | None = None,
         max_concurrent_queries: int | None = None,
         consistency_level: str | None = None,
+        connection_config: ConnectionConfig | None = None,
     ):
         """
         Initialize enhanced DataFrame reader.
@@ -65,10 +71,14 @@ class CassandraDataFrameReader:
             keyspace: Keyspace name (optional if fully qualified table)
             max_concurrent_queries: Max concurrent queries to Cassandra (default: no limit)
             consistency_level: Cassandra consistency level (default: LOCAL_ONE)
+            connection_config: ConnectionConfig for distributed execution (optional)
         """
         self.session = session
         self.max_concurrent_queries = max_concurrent_queries
         self.memory_per_partition_mb = 128  # Default
+
+        # Store or create connection config
+        self._connection_config = connection_config
 
         # Set consistency level
         from cassandra import ConsistencyLevel
@@ -150,6 +160,15 @@ class CassandraDataFrameReader:
         if self._dataframe_factory is None:
             raise RuntimeError("DataFrame factory not loaded. Call _ensure_metadata() first.")
         return self._dataframe_factory
+
+    @property
+    def connection_config(self) -> ConnectionConfig:
+        """Get connection config, creating from session if needed."""
+        if self._connection_config is None:
+            # Extract config from current session's cluster
+            cluster = self.session._session.cluster
+            self._connection_config = ConnectionConfig.from_cluster(cluster)
+        return self._connection_config
 
     async def read(
         self,
@@ -569,18 +588,28 @@ class CassandraDataFrameReader:
         adaptive_page_size: bool,
     ) -> None:
         """Prepare partition definitions with all required info."""
+        # Get connection config for workers
+        connection_config = self.connection_config
+
         for partition_def in partitions:
             # Add query-specific info to partition definition
             partition_def["writetime_columns"] = writetime_columns
             partition_def["ttl_columns"] = ttl_columns
-            partition_def["query_builder"] = self.query_builder
-            partition_def["type_mapper"] = self.type_mapper
+
+            # Add serializable connection config instead of objects
+            partition_def["connection_config"] = connection_config
+            partition_def["keyspace"] = self.keyspace
+            partition_def["table"] = self.table
+
             # For token queries, only use partition key columns
             partition_def["primary_key_columns"] = self.table_metadata["partition_key"]
             partition_def["_table_metadata"] = self.table_metadata
             partition_def["writetime_filter"] = writetime_filter
             partition_def["snapshot_time"] = snapshot_time
-            partition_def["_semaphore"] = self._semaphore
+
+            # Add concurrency control settings (serializable)
+            partition_def["max_concurrent_queries"] = self.max_concurrent_queries
+
             # Convert Predicate objects to dicts for partition reading
             partition_def["pushdown_predicates"] = [
                 {"column": p.column, "operator": p.operator, "value": p.value}
@@ -601,12 +630,25 @@ class CassandraDataFrameReader:
         """Create Dask DataFrame using delayed execution."""
         delayed_partitions = []
 
+        # Check if we're in a distributed environment
+        try:
+            Client.current()
+            is_distributed = True
+        except ValueError:
+            is_distributed = False
+
         for partition_def in partitions:
-            # Create delayed task
-            delayed = dask.delayed(PartitionReader.read_partition_sync)(
-                partition_def,
-                self.session,
-            )
+            if is_distributed:
+                # For distributed execution, use connection config
+                delayed = dask.delayed(PartitionReader.read_partition_distributed)(
+                    partition_def,
+                )
+            else:
+                # For local execution, pass the session
+                delayed = dask.delayed(PartitionReader.read_partition_sync)(
+                    partition_def,
+                    self.session,
+                )
             delayed_partitions.append(delayed)
 
         # Debug

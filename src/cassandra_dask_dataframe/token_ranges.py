@@ -34,12 +34,19 @@ class TokenRange:
 
         Handles wraparound ranges where end < start (e.g., the last
         range that wraps from near MAX_TOKEN to near MIN_TOKEN).
+
+        Token ranges in Cassandra are inclusive of start but exclusive of end.
+        For wraparound ranges, we split it into two parts:
+        - From start to MAX_TOKEN (inclusive of start, inclusive of MAX_TOKEN)
+        - From MIN_TOKEN to end (inclusive of MIN_TOKEN, exclusive of end)
         """
         if self.end >= self.start:
             return self.end - self.start
         else:
             # Handle wraparound
-            return (MAX_TOKEN - self.start) + (self.end - MIN_TOKEN) + 1
+            # First part: from start to MAX_TOKEN (both inclusive)
+            # Second part: from MIN_TOKEN to end (MIN_TOKEN inclusive, end exclusive)
+            return (MAX_TOKEN - self.start + 1) + (self.end - MIN_TOKEN)
 
     @property
     def fraction(self) -> float:

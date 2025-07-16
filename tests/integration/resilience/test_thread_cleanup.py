@@ -178,7 +178,6 @@ class TestThreadCleanup:
                 "test_table",
                 session=session,
                 partition_count=10,
-                use_parallel_execution=True,
                 max_concurrent_partitions=5,
             )
             assert len(df) == 100
@@ -208,7 +207,7 @@ class TestThreadCleanup:
             # Multiple reads
             for i in range(5):
                 df = await cdf.read_cassandra_table(
-                    "test_table", session=session, partition_count=3, use_parallel_execution=True
+                    "test_table", session=session, partition_count=3
                 )
                 assert len(df) == 100
 
@@ -257,7 +256,6 @@ class TestThreadCleanup:
                 "test_table",
                 session=session,
                 partition_count=5,
-                use_parallel_execution=False,  # Use Dask
             )
             result = df.compute()
             assert len(result) == 100
@@ -294,7 +292,6 @@ class TestThreadCleanup:
                     "non_existent_table",
                     session=session,
                     partition_count=5,
-                    use_parallel_execution=True,
                 )
 
         # Cleanup should still work after error

@@ -62,6 +62,7 @@ class TestTableMetadataExtractor:
         # Set up the metadata hierarchy
         cluster.metadata.keyspaces = {"test_ks": keyspace_meta}
         keyspace_meta.tables = {"test_table": table_meta}
+        keyspace_meta.user_types = {}  # No UDTs for this test
 
         # Mock table structure
         table_meta.keyspace_name = "test_ks"
@@ -111,6 +112,7 @@ class TestTableMetadataExtractor:
 
         keyspace_meta = Mock()
         keyspace_meta.tables = {}
+        keyspace_meta.user_types = {}  # No UDTs
         cluster.metadata.keyspaces = {"test_ks": keyspace_meta}
 
         extractor = TableMetadataExtractor(session)

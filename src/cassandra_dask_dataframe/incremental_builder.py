@@ -112,6 +112,48 @@ class IncrementalDataFrameBuilder:
                     chunk_df, self.table_metadata, self.type_mapper
                 )
 
+                # After type conversion, ensure correct dtypes are applied
+                # This is critical for collections of UDTs which should be object dtype
+                for col in chunk_df.columns:
+                    if not (col.endswith("_writetime") or col.endswith("_ttl")):
+                        col_info = next(
+                            (c for c in self.table_metadata["columns"] if c["name"] == col), None
+                        )
+                        if col_info:
+                            col_type = str(col_info["type"])
+                            pandas_dtype = self.type_mapper.get_pandas_dtype(
+                                col_type, self.table_metadata
+                            )
+
+                            # Apply extension dtypes
+                            from pandas.api.extensions import ExtensionDtype
+
+                            if isinstance(pandas_dtype, ExtensionDtype):
+                                from cassandra_dask_dataframe.cassandra_udt_dtype import (
+                                    CassandraUDTArray,
+                                    CassandraUDTDtype,
+                                )
+                                from cassandra_dask_dataframe.cassandra_writetime_dtype import (
+                                    CassandraWritetimeArray,
+                                    CassandraWritetimeDtype,
+                                )
+
+                                if isinstance(pandas_dtype, CassandraUDTDtype):
+                                    arr = CassandraUDTArray(
+                                        chunk_df[col].values, dtype=pandas_dtype
+                                    )
+                                    chunk_df[col] = pd.Series(arr, index=chunk_df.index)
+                                elif isinstance(pandas_dtype, CassandraWritetimeDtype):
+                                    arr = CassandraWritetimeArray(
+                                        chunk_df[col].values, dtype=pandas_dtype
+                                    )
+                                    chunk_df[col] = pd.Series(arr, index=chunk_df.index)
+                            elif pandas_dtype == "object":
+                                # Ensure object columns stay as object dtype
+                                # This is critical for collections of UDTs
+                                if chunk_df[col].dtype != object:
+                                    chunk_df[col] = chunk_df[col].astype(object)
+
             self.chunks.append(chunk_df)
             self.current_chunk_data = []
 

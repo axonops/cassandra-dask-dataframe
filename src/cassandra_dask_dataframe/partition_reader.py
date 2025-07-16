@@ -7,6 +7,7 @@ and concurrency control.
 
 # mypy: ignore-errors
 
+import asyncio
 from typing import Any
 
 import pandas as pd
@@ -30,6 +31,8 @@ from .cassandra_dtypes import (
 from .cassandra_udt_dtype import CassandraUDTArray, CassandraUDTDtype
 from .event_loop_manager import EventLoopManager
 from .partition import StreamingPartitionStrategy
+from .query_builder import QueryBuilder
+from .types import CassandraTypeMapper
 
 
 class PartitionReader:
@@ -41,7 +44,7 @@ class PartitionReader:
         session,
     ) -> pd.DataFrame:
         """
-        Synchronous wrapper for Dask delayed execution.
+        Synchronous wrapper for Dask delayed execution (local mode).
 
         Runs the async partition reader using a shared event loop.
         """
@@ -51,24 +54,47 @@ class PartitionReader:
         )
 
     @staticmethod
+    def read_partition_distributed(
+        partition_def: dict[str, Any],
+    ) -> pd.DataFrame:
+        """
+        Synchronous wrapper for Dask distributed execution.
+
+        Creates a new connection on the worker and reads the partition.
+        """
+        # Create new event loop for this worker thread
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+        try:
+            # Run the distributed partition reader
+            return loop.run_until_complete(
+                PartitionReader.read_partition_distributed_async(partition_def)
+            )
+        finally:
+            loop.close()
+
+    @staticmethod
     async def read_partition(
         partition_def: dict[str, Any],
         session,
     ) -> pd.DataFrame:
         """
-        Read a single partition with concurrency control.
+        Read a single partition with concurrency control (local mode).
 
-        This is executed on Dask workers.
+        This is executed locally with an existing session.
         """
-        # Extract components from partition definition
-        query_builder = partition_def["query_builder"]
-        type_mapper = partition_def["type_mapper"]
+        # Extract metadata and create helpers
+        table_metadata = partition_def["_table_metadata"]
+        query_builder = QueryBuilder(table_metadata)
+        type_mapper = CassandraTypeMapper()
         writetime_columns = partition_def.get("writetime_columns")
         ttl_columns = partition_def.get("ttl_columns")
-        semaphore = partition_def.get("_semaphore")
 
         # Apply concurrency control if configured
-        if semaphore:
+        max_concurrent = partition_def.get("max_concurrent_queries")
+        if max_concurrent:
+            semaphore = asyncio.Semaphore(max_concurrent)
             async with semaphore:
                 return await PartitionReader._read_partition_impl(
                     partition_def,
@@ -82,6 +108,78 @@ class PartitionReader:
             return await PartitionReader._read_partition_impl(
                 partition_def, session, query_builder, type_mapper, writetime_columns, ttl_columns
             )
+
+    @staticmethod
+    async def read_partition_distributed_async(
+        partition_def: dict[str, Any],
+    ) -> pd.DataFrame:
+        """
+        Read a single partition in distributed mode.
+
+        Creates a new connection on the worker.
+        """
+        # Ensure custom dtypes are registered on worker
+        from .dask_dtype_registration import _ensure_dtypes_registered
+
+        _ensure_dtypes_registered()
+
+        # Extract connection config
+        connection_config = partition_def["connection_config"]
+        keyspace = partition_def["keyspace"]
+
+        # Create cluster and session on worker
+        # Check for environment variable override for contact points (useful in containerized environments)
+        import os
+
+        if os.getenv("CASSANDRA_CONTACT_POINTS"):
+            # Override contact points from environment
+            contact_points = os.getenv("CASSANDRA_CONTACT_POINTS").split(",")
+            connection_config.contact_points = contact_points
+            print(f"DEBUG: Overriding contact points to: {contact_points}")
+        else:
+            print(f"DEBUG: Using original contact points: {connection_config.contact_points}")
+
+        cluster = connection_config.create_cluster()
+        session = cluster.connect(keyspace)
+
+        try:
+            # Wrap in async session
+            from async_cassandra import AsyncCassandraSession
+
+            async_session = AsyncCassandraSession(session)
+
+            # Extract metadata and create helpers
+            table_metadata = partition_def["_table_metadata"]
+            query_builder = QueryBuilder(table_metadata)
+            type_mapper = CassandraTypeMapper()
+            writetime_columns = partition_def.get("writetime_columns")
+            ttl_columns = partition_def.get("ttl_columns")
+
+            # Apply concurrency control if configured
+            max_concurrent = partition_def.get("max_concurrent_queries")
+            if max_concurrent:
+                semaphore = asyncio.Semaphore(max_concurrent)
+                async with semaphore:
+                    return await PartitionReader._read_partition_impl(
+                        partition_def,
+                        async_session,
+                        query_builder,
+                        type_mapper,
+                        writetime_columns,
+                        ttl_columns,
+                    )
+            else:
+                return await PartitionReader._read_partition_impl(
+                    partition_def,
+                    async_session,
+                    query_builder,
+                    type_mapper,
+                    writetime_columns,
+                    ttl_columns,
+                )
+        finally:
+            # Clean up connection
+            cluster.shutdown()
 
     @staticmethod
     async def _read_partition_impl(
@@ -140,7 +238,9 @@ class PartitionReader:
             )
             if col_info:
                 col_type = str(col_info["type"])
-                pandas_dtype = type_mapper.get_pandas_dtype(col_type)
+                pandas_dtype = type_mapper.get_pandas_dtype(
+                    col_type, partition_def["_table_metadata"]
+                )
                 schema[col] = pandas_dtype
 
         # Add writetime columns

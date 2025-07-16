@@ -14,9 +14,10 @@ from collections.abc import Sequence
 
 import numpy as np
 import pandas as pd
-from pandas.api.extensions import ExtensionArray, ExtensionDtype
+from pandas.api.extensions import ExtensionArray, ExtensionDtype, register_extension_dtype
 
 
+@register_extension_dtype
 class CassandraWritetimeDtype(ExtensionDtype):
     """Custom dtype for Cassandra writetime values."""
 

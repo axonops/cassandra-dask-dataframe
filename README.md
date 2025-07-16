@@ -1,9 +1,10 @@
-# async-cassandra-dataframe
+# cassandra-dask-dataframe
 
-Dask DataFrame integration for Apache Cassandra, built on top of async-cassandra. Read and process Cassandra data at scale using distributed DataFrames.
+Dask DataFrame integration for Apache Cassandra. Read and process Cassandra data at scale using distributed DataFrames with full support for Dask clusters.
 
 ## Features
 
+- **True Distributed Execution**: Each Dask worker creates its own Cassandra connection for parallel reads
 - **Streaming/Adaptive Partitioning**: No need to estimate data sizes upfront - partitions are created dynamically based on memory constraints
 - **Distributed Processing**: Leverages Dask for parallel processing across multiple workers
 - **Memory Safety**: Configurable memory limits per partition prevent OOM errors
@@ -14,7 +15,7 @@ Dask DataFrame integration for Apache Cassandra, built on top of async-cassandra
 ## Installation
 
 ```bash
-pip install async-cassandra-dataframe
+pip install cassandra-dask-dataframe
 ```
 
 ## Quick Start
@@ -85,22 +86,44 @@ df = await cdf.read_cassandra_table(
 
 ### Distributed Execution
 
-Works seamlessly with Dask distributed clusters:
+The library automatically detects when running on a Dask cluster and creates Cassandra connections on each worker:
 
 ```python
 from dask.distributed import Client
+from cassandra_dask_dataframe import CassandraDataFrameReader
+from cassandra_dask_dataframe.connection_config import ConnectionConfig
+
+# Create connection config (serializable)
+config = ConnectionConfig(
+    contact_points=['cassandra-node1', 'cassandra-node2'],
+    port=9042,
+    auth_provider_class='PlainTextAuthProvider',
+    auth_provider_args={'username': 'user', 'password': 'pass'}
+)
 
 # Connect to Dask cluster
-async with Client('scheduler-address:8786', asynchronous=True) as client:
-    df = await cdf.read_cassandra_table(
-        'myks.events',
-        session=session,
-        client=client  # Use distributed cluster
+with Client('scheduler-address:8786') as client:
+    # Create reader with connection config
+    reader = CassandraDataFrameReader(
+        session=session,  # Only used for metadata
+        table='large_table',
+        connection_config=config  # Workers will use this
     )
 
-    # Operations run on cluster
-    result = await df.map_partitions(process_partition).compute()
+    # Read distributed - each worker connects to Cassandra
+    df = await reader.read(
+        partition_count=100  # Spread across workers
+    )
+
+    # Operations run distributed
+    result = df.groupby('category').agg({'value': 'sum'}).compute()
 ```
+
+Each worker:
+1. Receives partition definitions with connection config
+2. Creates its own Cassandra connection
+3. Reads its assigned token ranges
+4. Returns DataFrame partitions
 
 ## Advanced Usage
 

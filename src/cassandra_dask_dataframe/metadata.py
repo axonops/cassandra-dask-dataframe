@@ -76,6 +76,17 @@ class TableMetadataExtractor:
             if col_name not in partition_keys and col_name not in clustering_keys:
                 columns.append(self._process_column(col_meta))
 
+        # Get user-defined types from keyspace
+        keyspace_meta = self._cluster.metadata.keyspaces.get(table_meta.keyspace_name)
+        user_types = {}
+        if keyspace_meta and hasattr(keyspace_meta, "user_types"):
+            for udt_name, udt in keyspace_meta.user_types.items():
+                user_types[udt_name] = {
+                    "name": udt_name,
+                    "field_names": udt.field_names,
+                    "field_types": [str(ft) for ft in udt.field_types],
+                }
+
         return {
             "keyspace": table_meta.keyspace_name,
             "table": table_meta.name,
@@ -84,6 +95,7 @@ class TableMetadataExtractor:
             "clustering_key": [col.name for col in table_meta.clustering_key],
             "primary_key": self._get_primary_key(table_meta),
             "options": table_meta.options,
+            "user_types": user_types,
         }
 
     def _process_column(

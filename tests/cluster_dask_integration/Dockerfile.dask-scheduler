@@ -1,0 +1,7 @@
+FROM python:3.12-slim
+
+# Install Dask and dependencies
+RUN pip install dask[complete] distributed cassandra-driver async-cassandra
+
+# Default to running dask-scheduler
+ENTRYPOINT ["dask-scheduler"]

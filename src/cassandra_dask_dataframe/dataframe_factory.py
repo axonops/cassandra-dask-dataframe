@@ -50,13 +50,13 @@ class DataFrameFactory:
             col_info = next((c for c in self._table_metadata["columns"] if c["name"] == col), None)
             if col_info:
                 col_type = str(col_info["type"])
-                dtype = self._type_mapper.get_pandas_dtype(col_type)
+                dtype = self._type_mapper.get_pandas_dtype(col_type, self._table_metadata)
 
                 if dtype == "object":
                     # Provide example values for object columns to prevent Dask serialization issues
                     data[col] = self._create_example_series(col_type)
                 else:
-                    # Non-object types
+                    # All other types including custom extension dtypes
                     data[col] = pd.Series(dtype=dtype)
 
         # Add writetime columns
@@ -75,23 +75,25 @@ class DataFrameFactory:
 
     def _create_example_series(self, col_type: str) -> pd.Series:
         """Create example Series for object column types."""
+        # IMPORTANT: Always explicitly specify dtype="object" to prevent
+        # pandas from inferring our custom extension dtype for collections
         if col_type == "list" or col_type.startswith("list<"):
-            return pd.Series([[]], dtype="object")
+            return pd.Series([[]], dtype=object)
         elif col_type == "set" or col_type.startswith("set<"):
-            return pd.Series([set()], dtype="object")
+            return pd.Series([set()], dtype=object)
         elif col_type == "map" or col_type.startswith("map<"):
-            return pd.Series([{}], dtype="object")
+            return pd.Series([{}], dtype=object)
         elif col_type.startswith("frozen<"):
             # Frozen collections or UDTs
             if "list" in col_type:
-                return pd.Series([[]], dtype="object")
+                return pd.Series([[]], dtype=object)
             elif "set" in col_type:
-                return pd.Series([set()], dtype="object")
+                return pd.Series([set()], dtype=object)
             elif "map" in col_type:
-                return pd.Series([{}], dtype="object")
+                return pd.Series([{}], dtype=object)
             else:
                 # Frozen UDT
-                return pd.Series([{}], dtype="object")
+                return pd.Series([{}], dtype=object)
         elif "<" not in col_type and col_type not in [
             "text",
             "varchar",
@@ -102,7 +104,7 @@ class DataFrameFactory:
             "inet",
         ]:
             # Likely a UDT (non-parameterized custom type)
-            return pd.Series([{}], dtype="object")
+            return pd.Series([{}], dtype=object)
         else:
             # Other object types
-            return pd.Series([], dtype="object")
+            return pd.Series([], dtype=object)

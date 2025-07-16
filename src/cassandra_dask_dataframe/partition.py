@@ -309,13 +309,15 @@ class StreamingPartitionStrategy:
             where_clauses = []
 
             if use_token_ranges:
-                # Use token-based partitioning
-                start_token = partition_def["start_token"]
-                end_token = partition_def["end_token"]
-                pk_columns = partition_def.get("primary_key_columns", ["id"])
-                token_expr = f"TOKEN({', '.join(pk_columns)})"
-                where_clauses.append(f"{token_expr} >= ? AND {token_expr} <= ?")
-                values.extend([start_token, end_token])
+                # Use token-based partitioning - but check if tokens exist
+                start_token = partition_def.get("start_token")
+                end_token = partition_def.get("end_token")
+
+                if start_token is not None and end_token is not None:
+                    pk_columns = partition_def.get("primary_key_columns", ["id"])
+                    token_expr = f"TOKEN({', '.join(pk_columns)})"
+                    where_clauses.append(f"{token_expr} >= ? AND {token_expr} <= ?")
+                    values.extend([start_token, end_token])
 
             # Add pushdown predicates
             # CRITICAL: When using token ranges, skip partition key predicates
@@ -371,14 +373,14 @@ class StreamingPartitionStrategy:
                 )
 
             # For token-based queries, we need to handle pagination properly
-            # start_token and end_token are defined above in the query building section
             start_token = partition_def.get("start_token")
             end_token = partition_def.get("end_token")
-            if start_token is None or end_token is None:
-                raise ValueError(
-                    "Token range queries require start_token and end_token in partition definition"
-                )
 
+            # If no token ranges specified, fall through to non-token query
+            if start_token is None or end_token is None:
+                use_token_ranges = False
+
+        if use_token_ranges and start_token is not None and end_token is not None:
             # Use the simpler streaming approach
             from .streaming import CassandraStreamer
 
@@ -423,7 +425,7 @@ class StreamingPartitionStrategy:
                 where_values=where_values,
                 consistency_level=partition_def.get("consistency_level"),
                 table_metadata=partition_def.get("_table_metadata"),
-                type_mapper=partition_def.get("type_mapper"),
+                type_mapper=None,  # Will be created in streaming if needed
                 writetime_columns=writetime_columns,
                 ttl_columns=ttl_columns,
             )
@@ -448,7 +450,7 @@ class StreamingPartitionStrategy:
                 memory_limit_mb=memory_limit_mb,
                 consistency_level=partition_def.get("consistency_level"),
                 table_metadata=partition_def.get("_table_metadata"),
-                type_mapper=partition_def.get("type_mapper"),
+                type_mapper=None,  # Will be created in streaming if needed
             )
 
     async def _stream_token_range_partition(
@@ -630,22 +632,18 @@ class StreamingPartitionStrategy:
             # Convert rows to DataFrame preserving types
             # Special handling for UDTs which come as namedtuples
             def convert_value(value):
-                """Recursively convert UDTs to dicts."""
-                if hasattr(value, "_fields") and hasattr(value, "_asdict"):
-                    # It's a UDT - convert to dict
-                    result = {}
-                    for field in value._fields:
-                        field_value = getattr(value, field)
-                        # Recursively convert nested UDTs
-                        result[field] = convert_value(field_value)
-                    return result
-                elif isinstance(value, list | tuple):
-                    # Handle collections containing UDTs
+                """Process values, keeping UDTs as namedtuples."""
+                if isinstance(value, list):
+                    # Handle lists - process each element
+                    return [convert_value(item) for item in value]
+                elif isinstance(value, set):
+                    # Handle sets - convert to list for pandas compatibility
                     return [convert_value(item) for item in value]
                 elif isinstance(value, dict):
-                    # Handle maps containing UDTs
+                    # Handle maps - process values
                     return {k: convert_value(v) for k, v in value.items()}
                 else:
+                    # Keep UDTs as namedtuples, don't convert to dict
                     return value
 
             df_data = []
@@ -667,6 +665,10 @@ class StreamingPartitionStrategy:
                 df_data.append(row_dict)
 
             df = pd.DataFrame(df_data)
+            # print(f"DEBUG partition.py: Created DataFrame with shape {df.shape}")
+            # print(f"DEBUG partition.py: DataFrame columns: {list(df.columns)}")
+            # if len(df) > 0:
+            #     print(f"DEBUG partition.py: First row dtypes: {df.dtypes.to_dict()}")
 
             # Debug writetime columns
             # print(f"DEBUG: DataFrame columns after creation: {list(df.columns)}")
@@ -707,11 +709,18 @@ class StreamingPartitionStrategy:
                 df = df[expected_columns]
 
             # Apply type conversions using type mapper if available
-            if "type_mapper" in partition_def and "_table_metadata" in partition_def:
-                type_mapper = partition_def["type_mapper"]
+            if "_table_metadata" in partition_def:
                 table_metadata = partition_def["_table_metadata"]
+                # Get or create type mapper
+                if "type_mapper" in partition_def:
+                    type_mapper = partition_def["type_mapper"]
+                else:
+                    # Create type mapper if not present (e.g., in distributed execution)
+                    from .types import CassandraTypeMapper
 
-                # Apply type conversions
+                    type_mapper = CassandraTypeMapper()
+
+                # Apply type conversions and dtypes
                 for col in df.columns:
                     if not (col.endswith("_writetime") or col.endswith("_ttl")):
                         col_info = next(
@@ -719,19 +728,65 @@ class StreamingPartitionStrategy:
                         )
                         if col_info:
                             col_type = str(col_info["type"])
-                            # print(f"DEBUG: Column {col} has type {col_type}, current value type: {type(df.iloc[0][col]) if len(df) > 0 else 'empty'}")
+                            # Get the pandas dtype for this column
+                            pandas_dtype = type_mapper.get_pandas_dtype(col_type, table_metadata)
+
                             # Apply conversion for complex types
                             if (
                                 col_type.startswith("frozen")
                                 or "<" in col_type
                                 or col_type in ["udt", "tuple"]
                             ):
-                                # print(f"DEBUG: Applying type mapper to column {col}, type {col_type}")
                                 df[col] = df[col].apply(
                                     lambda x, ct=col_type: (
                                         type_mapper.convert_value(x, ct) if type_mapper else x
                                     )
                                 )
+
+                            # Apply the correct dtype if it's a custom extension dtype
+                            from pandas.api.extensions import ExtensionDtype
+
+                            if isinstance(pandas_dtype, ExtensionDtype):
+                                # For custom extension dtypes, we need to construct the array
+                                from cassandra_dask_dataframe.cassandra_udt_dtype import (
+                                    CassandraUDTArray,
+                                    CassandraUDTDtype,
+                                )
+                                from cassandra_dask_dataframe.cassandra_writetime_dtype import (
+                                    CassandraWritetimeArray,
+                                    CassandraWritetimeDtype,
+                                )
+
+                                if isinstance(pandas_dtype, CassandraUDTDtype):
+                                    # Debug: log the dtype details
+                                    # print(f"DEBUG partition.py: Creating UDT array for column {col}")
+                                    # print(f"DEBUG partition.py: pandas_dtype = {pandas_dtype}")
+                                    # print(f"DEBUG partition.py: dtype keyspace = {pandas_dtype.keyspace}")
+                                    # print(f"DEBUG partition.py: dtype udt_name = {pandas_dtype.udt_name}")
+                                    arr = CassandraUDTArray(df[col].values, dtype=pandas_dtype)
+                                    df[col] = pd.Series(arr, index=df.index)
+                                    # print(f"DEBUG partition.py: After conversion, df[{col}].dtype = {df[col].dtype}")
+                                elif isinstance(pandas_dtype, CassandraWritetimeDtype):
+                                    arr = CassandraWritetimeArray(
+                                        df[col].values, dtype=pandas_dtype
+                                    )
+                                    df[col] = pd.Series(arr, index=df.index)
+                            elif pandas_dtype == "object":
+                                # Ensure object columns stay as object dtype
+                                # This is important for collections of UDTs
+                                if df[col].dtype != "object":
+                                    df[col] = df[col].astype("object")
+
+                    # Handle writetime columns
+                    elif col.endswith("_writetime"):
+                        from cassandra_dask_dataframe.cassandra_writetime_dtype import (
+                            CassandraWritetimeArray,
+                            CassandraWritetimeDtype,
+                        )
+
+                        dtype = CassandraWritetimeDtype()
+                        arr = CassandraWritetimeArray(df[col].values, dtype=dtype)
+                        df[col] = pd.Series(arr, index=df.index)
 
             return df
         else:
@@ -745,10 +800,16 @@ class StreamingPartitionStrategy:
             # print(f"DEBUG stream_partition: writetime_columns={writetime_columns}")
 
             from .partition_reader import PartitionReader
+            from .types import CassandraTypeMapper
+
+            # Create type mapper if not present
+            type_mapper = partition_def.get("type_mapper")
+            if type_mapper is None:
+                type_mapper = CassandraTypeMapper()
 
             empty_df = PartitionReader._create_empty_dataframe(
                 partition_def,
-                partition_def.get("type_mapper"),
+                type_mapper,
                 partition_def.get("writetime_columns"),
                 partition_def.get("ttl_columns"),
             )
@@ -822,6 +883,7 @@ class PartitionHelper:
     async def stream_grouped_partition(
         session, partition_def: dict[str, Any], fetch_size: int
     ) -> pd.DataFrame:
+        # print(f"DEBUG partition.py: stream_grouped_partition called")
         """
         Stream data from a grouped partition containing multiple token ranges.
 
@@ -846,7 +908,7 @@ class PartitionHelper:
                 where_values=(),
                 consistency_level=partition_def.get("consistency_level"),
                 table_metadata=partition_def.get("_table_metadata"),
-                type_mapper=partition_def.get("type_mapper"),
+                type_mapper=None,  # Will be created in streaming if needed
                 writetime_columns=partition_def.get("writetime_columns"),
                 ttl_columns=partition_def.get("ttl_columns"),
             )
@@ -861,9 +923,14 @@ class PartitionHelper:
             # Return empty DataFrame with correct schema from partition definition
             from .partition_reader import PartitionReader
 
+            # Create type mapper if not present
+            from .types import CassandraTypeMapper
+
+            type_mapper = partition_def.get("type_mapper") or CassandraTypeMapper()
+
             return PartitionReader._create_empty_dataframe(
                 partition_def,
-                partition_def.get("type_mapper"),
+                type_mapper,
                 partition_def.get("writetime_columns"),
                 partition_def.get("ttl_columns"),
             )

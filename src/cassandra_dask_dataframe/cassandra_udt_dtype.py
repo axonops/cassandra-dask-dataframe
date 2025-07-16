@@ -13,9 +13,10 @@ from collections.abc import Sequence
 
 import numpy as np
 import pandas as pd
-from pandas.api.extensions import ExtensionArray, ExtensionDtype
+from pandas.api.extensions import ExtensionArray, ExtensionDtype, register_extension_dtype
 
 
+@register_extension_dtype
 class CassandraUDTDtype(ExtensionDtype):
     """Custom dtype for Cassandra UDTs."""
 
@@ -58,6 +59,22 @@ class CassandraUDTDtype(ExtensionDtype):
         """String representation."""
         return str(self)
 
+    def __eq__(self, other):
+        """Check equality with other dtype."""
+        if isinstance(other, str):
+            # Handle string comparison - never equal to 'category'
+            try:
+                return self == self.construct_from_string(other)
+            except Exception:
+                return False
+        elif isinstance(other, CassandraUDTDtype):
+            return self.keyspace == other.keyspace and self.udt_name == other.udt_name
+        return False
+
+    def __hash__(self):
+        """Hash for dtype."""
+        return hash((self.name, self.keyspace, self.udt_name))
+
     @classmethod
     def construct_array_type(cls) -> type[CassandraUDTArray]:
         """Return the array type associated with this dtype."""
@@ -75,7 +92,11 @@ class CassandraUDTArray(ExtensionArray):
             values: Sequence of UDT values (namedtuples or None)
             dtype: CassandraUDTDtype instance
         """
-        self._values = np.asarray(values, dtype=object)
+        # Create empty object array to preserve namedtuples
+        # np.asarray converts namedtuples to 2D arrays, which we don't want
+        self._values = np.empty(len(values), dtype=object)
+        for i, val in enumerate(values):
+            self._values[i] = val
         self._dtype = dtype or CassandraUDTDtype()
 
     @classmethod
@@ -101,6 +122,10 @@ class CassandraUDTArray(ExtensionArray):
     def __len__(self) -> int:
         """Length of array."""
         return len(self._values)
+
+    def __iter__(self):
+        """Iterate over array elements."""
+        return iter(self._values)
 
     def __eq__(self, other):
         """Equality comparison."""
@@ -140,10 +165,43 @@ class CassandraUDTArray(ExtensionArray):
         """Return a copy of the array."""
         return type(self)(self._values.copy(), dtype=self._dtype)
 
+    @classmethod
     def _concat_same_type(cls, to_concat):
         """Concatenate multiple arrays."""
-        values = np.concatenate([arr._values for arr in to_concat])
-        return cls(values, dtype=to_concat[0].dtype)
+        # Concatenate preserving object dtype
+        all_values = []
+        for arr in to_concat:
+            all_values.extend(arr._values)
+        return cls(all_values, dtype=to_concat[0].dtype)
+
+    def _reduce(self, name: str, *, skipna: bool = True, keepdims: bool = False, **kwargs):
+        """
+        Return a scalar result of performing the reduction operation.
+
+        Override to ensure proper behavior with apply/map operations.
+        """
+        raise TypeError(f"Cannot perform reduction '{name}' on CassandraUDTArray")
+
+    def map(self, mapper, na_action=None):
+        """
+        Map values using an input mapping function.
+
+        This is called by pandas when using apply on a Series.
+        """
+        if na_action is not None and na_action != "ignore":
+            raise ValueError(f"na_action={na_action} not supported")
+
+        # Apply the mapper to each element properly
+        result = []
+        for val in self._values:
+            if val is None and na_action == "ignore":
+                result.append(None)
+            else:
+                result.append(mapper(val))
+
+        # Return a list instead of numpy array to avoid 2D array issues
+        # when the mapper returns tuples
+        return result
 
     def to_dict(self) -> pd.Series:
         """

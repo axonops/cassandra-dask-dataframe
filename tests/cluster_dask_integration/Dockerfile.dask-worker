@@ -1,0 +1,10 @@
+FROM python:3.12-slim
+
+# Install Dask and dependencies
+RUN pip install dask[complete] distributed cassandra-driver async-cassandra
+
+# Set Python path
+ENV PYTHONPATH=/app/src
+
+# Default to running dask-worker
+ENTRYPOINT ["dask-worker"]

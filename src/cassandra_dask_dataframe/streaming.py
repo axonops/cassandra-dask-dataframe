@@ -323,19 +323,15 @@ class CassandraStreamer:
         return pd.DataFrame(data)
 
     def _convert_value(self, value: Any) -> Any:
-        """Convert UDTs to dicts recursively."""
-        if hasattr(value, "_fields") and hasattr(value, "_asdict"):
-            # It's a UDT - convert to dict
-            result = {}
-            for field in value._fields:
-                field_value = getattr(value, field)
-                result[field] = self._convert_value(field_value)
-            return result
-        elif isinstance(value, list | tuple):
-            # Handle collections containing UDTs
+        """Process values, keeping UDTs as namedtuples."""
+        if isinstance(value, list):
+            # Handle lists - process each element
+            return [self._convert_value(item) for item in value]
+        elif isinstance(value, set):
+            # Handle sets - convert to list for pandas compatibility
             return [self._convert_value(item) for item in value]
         elif isinstance(value, dict):
-            # Handle maps containing UDTs
+            # Handle maps - process values
             return {k: self._convert_value(v) for k, v in value.items()}
         else:
             return value

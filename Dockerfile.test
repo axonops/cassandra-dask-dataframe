@@ -19,9 +19,7 @@ COPY tests/ tests/
 # Install the package and test dependencies
 RUN pip install -e ".[test]"
 
-# Install async-cassandra from parent directory (for local development)
-# In production, this would come from PyPI
-COPY ../async-cassandra /tmp/async-cassandra
-RUN pip install -e /tmp/async-cassandra
+# Install additional test dependencies
+RUN pip install pytest-docker
 
 CMD ["pytest", "-v"]

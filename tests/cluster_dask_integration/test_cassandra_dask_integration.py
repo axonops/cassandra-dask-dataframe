@@ -91,7 +91,9 @@ class TestCassandraDaskIntegration:
                 worker = get_worker()
                 return pd.DataFrame({"worker_id": [worker.id], "partition_rows": [len(partition)]})
 
-            worker_info = df.map_partitions(identify_worker)
+            # Provide explicit metadata to avoid inference on local client
+            meta = pd.DataFrame({"worker_id": [""], "partition_rows": [0]})
+            worker_info = df.map_partitions(identify_worker, meta=meta)
             worker_stats = worker_info.compute()
 
             # Analyze distribution

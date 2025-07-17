@@ -1,5 +1,5 @@
 """
-Advanced usage examples for async-cassandra-dataframe.
+Advanced usage examples for cassandra-dask-dataframe.
 
 Shows writetime filtering, snapshot consistency, and concurrency control.
 """

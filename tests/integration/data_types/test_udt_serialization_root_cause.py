@@ -4,7 +4,7 @@ Test to identify root cause of UDT string serialization.
 This test compares UDT handling between:
 1. Raw cassandra-driver
 2. async-cassandra wrapper
-3. async-cassandra-dataframe with and without Dask
+3. cassandra-dask-dataframe with and without Dask
 
 What this tests:
 ---------------
@@ -24,7 +24,7 @@ Expected outcomes:
 -----------------
 - cassandra-driver: Returns namedtuple or dict-like objects
 - async-cassandra: Should preserve the same behavior
-- async-cassandra-dataframe: Should preserve UDT objects
+- cassandra-dask-dataframe: Should preserve UDT objects
 - Dask serialization: May convert to strings (known limitation)
 """
 
@@ -213,8 +213,8 @@ class TestUDTSerializationRootCause:
                 await session.close()
 
     async def test_3_dataframe_no_dask(self):
-        """Test 3: async-cassandra-dataframe without Dask (single partition)."""
-        print("\n=== TEST 3: async-cassandra-dataframe (no Dask) ===")
+        """Test 3: cassandra-dask-dataframe without Dask (single partition)."""
+        print("\n=== TEST 3: cassandra-dask-dataframe (no Dask) ===")
 
         async with AsyncCluster(["localhost"]) as cluster:
             session = await cluster.connect(self.keyspace)
@@ -261,8 +261,8 @@ class TestUDTSerializationRootCause:
                 await session.close()
 
     async def test_4_dataframe_with_dask(self):
-        """Test 4: async-cassandra-dataframe with Dask (multiple partitions)."""
-        print("\n=== TEST 4: async-cassandra-dataframe (with Dask) ===")
+        """Test 4: cassandra-dask-dataframe with Dask (multiple partitions)."""
+        print("\n=== TEST 4: cassandra-dask-dataframe (with Dask) ===")
 
         async with AsyncCluster(["localhost"]) as cluster:
             session = await cluster.connect()
@@ -297,8 +297,8 @@ class TestUDTSerializationRootCause:
                 await session.close()
 
     async def test_5_dataframe_parallel_execution(self):
-        """Test 5: async-cassandra-dataframe with parallel execution."""
-        print("\n=== TEST 5: async-cassandra-dataframe (parallel execution) ===")
+        """Test 5: cassandra-dask-dataframe with parallel execution."""
+        print("\n=== TEST 5: cassandra-dask-dataframe (parallel execution) ===")
 
         async with AsyncCluster(["localhost"]) as cluster:
             session = await cluster.connect()

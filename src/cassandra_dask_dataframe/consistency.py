@@ -1,5 +1,5 @@
 """
-Consistency level management for async-cassandra-dataframe.
+Consistency level management for cassandra-dask-dataframe.
 
 Provides utilities for setting and managing Cassandra consistency levels.
 """

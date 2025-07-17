@@ -78,8 +78,6 @@ class IncrementalDataFrameBuilder:
             result = row._asdict()
             # Debug first row
             # if self.total_rows == 0:
-            #     print(f"DEBUG IncrementalBuilder: First row dict keys: {list(result.keys())}")
-            #     print(f"DEBUG IncrementalBuilder: Expected columns: {self.columns}")
             return result
         elif hasattr(row, "__dict__"):
             return row.__dict__

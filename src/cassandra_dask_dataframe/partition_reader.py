@@ -29,7 +29,6 @@ from .cassandra_dtypes import (
     CassandraVarintDtype,
 )
 from .cassandra_udt_dtype import CassandraUDTArray, CassandraUDTDtype
-from .event_loop_manager import EventLoopManager
 from .partition import StreamingPartitionStrategy
 from .query_builder import QueryBuilder
 from .types import CassandraTypeMapper
@@ -48,10 +47,8 @@ class PartitionReader:
 
         Runs the async partition reader using a shared event loop.
         """
-        # Run the coroutine using the shared event loop
-        return EventLoopManager.run_coroutine(
-            PartitionReader.read_partition(partition_def, session)
-        )
+        # For local execution, use asyncio.run for simplicity
+        return asyncio.run(PartitionReader.read_partition(partition_def, session))
 
     @staticmethod
     def read_partition_distributed(
@@ -200,9 +197,6 @@ class PartitionReader:
         # Stream the partition
         df = await strategy.stream_partition(partition_def)
 
-        # print(f"DEBUG PartitionReader: After stream_partition, df.shape={df.shape}, columns={list(df.columns)}")
-        # print(f"DEBUG PartitionReader: writetime_columns={writetime_columns}")
-
         # Apply type conversions based on table metadata
         if df.empty:
             # For empty DataFrames, ensure columns have correct dtypes
@@ -268,8 +262,6 @@ class PartitionReader:
     ) -> pd.DataFrame:
         """Apply type conversions to DataFrame columns."""
         from .cassandra_writetime_dtype import CassandraWritetimeDtype
-
-        # print(f"DEBUG _apply_type_conversions: df.columns={list(df.columns)}, writetime_columns={writetime_columns}")
 
         for col in df.columns:
             if col.endswith("_writetime") and writetime_columns:

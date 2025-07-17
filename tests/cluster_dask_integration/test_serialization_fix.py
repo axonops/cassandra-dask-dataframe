@@ -195,7 +195,7 @@ class TestSerializationFix:
     @pytest.mark.asyncio
     async def test_async_wrapper_distributed_pattern(self, session, dask_client):
         """
-        Show how async-cassandra-dataframe should handle distributed execution.
+        Show how cassandra-dask-dataframe should handle distributed execution.
 
         What this tests:
         ---------------
@@ -211,7 +211,7 @@ class TestSerializationFix:
         - Each worker manages its own connections
         - Fully serializable for distributed execution
         """
-        # The pattern async-cassandra-dataframe should follow:
+        # The pattern cassandra-dask-dataframe should follow:
 
         # 1. Client side (async) - discovers metadata
         metadata = await session.execute(

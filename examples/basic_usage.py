@@ -1,5 +1,5 @@
 """
-Basic usage example for async-cassandra-dataframe.
+Basic usage example for cassandra-dask-dataframe.
 
 Shows how to read Cassandra tables as Dask DataFrames for distributed processing.
 """

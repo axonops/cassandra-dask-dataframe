@@ -1,5 +1,5 @@
 """
-Test task distribution for async-cassandra-dataframe on Dask cluster.
+Test task distribution for cassandra-dask-dataframe on Dask cluster.
 
 What this tests:
 ---------------

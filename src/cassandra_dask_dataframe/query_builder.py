@@ -84,9 +84,6 @@ class QueryBuilder:
         query = " ".join(query_parts)
 
         # Debug logging
-        # print(f"DEBUG build_partition_query: writetime_columns={writetime_columns}, columns={columns}")
-        # print(f"DEBUG query: {query}")
-        # print(f"DEBUG params: {params}")
 
         return query, params
 

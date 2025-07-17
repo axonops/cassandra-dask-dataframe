@@ -9,131 +9,117 @@ from datetime import UTC, datetime
 import pandas as pd
 
 
-class WritetimeSerializer:
+# Writetime conversion functions
+def writetime_to_timestamp(writetime: int | None) -> pd.Timestamp | None:
     """
-    Serializes writetime values from Cassandra.
+    Convert Cassandra writetime to pandas Timestamp.
 
-    Writetime in Cassandra is microseconds since epoch.
+    Args:
+        writetime: Microseconds since epoch (or None)
+
+    Returns:
+        pandas Timestamp with UTC timezone
     """
+    if writetime is None:
+        return None
 
-    @staticmethod
-    def to_timestamp(writetime: int | None) -> pd.Timestamp | None:
-        """
-        Convert Cassandra writetime to pandas Timestamp.
+    # Convert microseconds to seconds
+    seconds = writetime / 1_000_000
 
-        Args:
-            writetime: Microseconds since epoch (or None)
-
-        Returns:
-            pandas Timestamp with UTC timezone
-        """
-        if writetime is None:
-            return None
-
-        # Convert microseconds to seconds
-        seconds = writetime / 1_000_000
-
-        # Create timestamp
-        dt = datetime.fromtimestamp(seconds, tz=UTC)
-        return pd.Timestamp(dt)
-
-    @staticmethod
-    def from_timestamp(timestamp: pd.Timestamp | None) -> int | None:
-        """
-        Convert pandas Timestamp to Cassandra writetime.
-
-        Args:
-            timestamp: pandas Timestamp (or None)
-
-        Returns:
-            Microseconds since epoch
-        """
-        if timestamp is None:
-            return None
-
-        # Ensure UTC
-        if timestamp.tz is None:
-            timestamp = timestamp.tz_localize("UTC")
-        else:
-            timestamp = timestamp.tz_convert("UTC")
-
-        # Convert to microseconds
-        return int(timestamp.timestamp() * 1_000_000)
+    # Create timestamp
+    dt = datetime.fromtimestamp(seconds, tz=UTC)
+    return pd.Timestamp(dt)
 
 
-class TTLSerializer:
+def timestamp_to_writetime(timestamp: pd.Timestamp | None) -> int | None:
     """
-    Serializes TTL values from Cassandra.
+    Convert pandas Timestamp to Cassandra writetime.
 
-    TTL in Cassandra is seconds remaining until expiry.
+    Args:
+        timestamp: pandas Timestamp (or None)
+
+    Returns:
+        Microseconds since epoch
     """
+    if timestamp is None:
+        return None
 
-    @staticmethod
-    def to_seconds(ttl: int | None) -> int | None:
-        """
-        Convert Cassandra TTL to seconds.
+    # Ensure UTC
+    if timestamp.tz is None:
+        timestamp = timestamp.tz_localize("UTC")
+    else:
+        timestamp = timestamp.tz_convert("UTC")
 
-        Args:
-            ttl: TTL value from Cassandra
+    # Convert to microseconds
+    return int(timestamp.timestamp() * 1_000_000)
 
-        Returns:
-            TTL in seconds (or None if no TTL)
-        """
-        # TTL is already in seconds, just pass through
-        # None means no TTL set
-        return ttl
 
-    @staticmethod
-    def to_timedelta(ttl: int | None) -> pd.Timedelta | None:
-        """
-        Convert Cassandra TTL to pandas Timedelta.
+# TTL conversion functions
+def ttl_to_seconds(ttl: int | None) -> int | None:
+    """
+    Convert Cassandra TTL to seconds.
 
-        Args:
-            ttl: TTL value from Cassandra
+    Args:
+        ttl: TTL value from Cassandra
 
-        Returns:
-            pandas Timedelta (or None if no TTL)
-        """
-        if ttl is None:
-            return None
+    Returns:
+        TTL in seconds (or None if no TTL)
+    """
+    # TTL is already in seconds, just pass through
+    # None means no TTL set
+    return ttl
 
-        return pd.Timedelta(seconds=ttl)
 
-    @staticmethod
-    def from_seconds(seconds: int | None) -> int | None:
-        """
-        Convert seconds to Cassandra TTL.
+def ttl_to_timedelta(ttl: int | None) -> pd.Timedelta | None:
+    """
+    Convert Cassandra TTL to pandas Timedelta.
 
-        Args:
-            seconds: TTL in seconds
+    Args:
+        ttl: TTL value from Cassandra
 
-        Returns:
-            TTL value for Cassandra
-        """
-        if seconds is None or seconds <= 0:
-            return None
+    Returns:
+        pandas Timedelta (or None if no TTL)
+    """
+    if ttl is None:
+        return None
 
-        return int(seconds)
+    return pd.Timedelta(seconds=ttl)
 
-    @staticmethod
-    def from_timedelta(delta: pd.Timedelta | None) -> int | None:
-        """
-        Convert pandas Timedelta to Cassandra TTL.
 
-        Args:
-            delta: pandas Timedelta
+def seconds_to_ttl(seconds: int | None) -> int | None:
+    """
+    Convert seconds to Cassandra TTL.
 
-        Returns:
-            TTL in seconds for Cassandra
-        """
-        if delta is None:
-            return None
+    Args:
+        seconds: TTL in seconds
 
-        # Convert to seconds
-        seconds = int(delta.total_seconds())
+    Returns:
+        TTL value for Cassandra
+    """
+    if seconds is None or seconds <= 0:
+        return None
 
-        # TTL must be positive
-        if seconds <= 0:
-            return None
+    return int(seconds)
 
-        return seconds
+
+def timedelta_to_ttl(delta: pd.Timedelta | None) -> int | None:
+    """
+    Convert pandas Timedelta to Cassandra TTL.
+
+    Args:
+        delta: pandas Timedelta
+
+    Returns:
+        TTL in seconds for Cassandra
+    """
+    if delta is None:
+        return None
+
+    # Convert to seconds
+    seconds = int(delta.total_seconds())
+
+    # TTL must be positive
+    if seconds <= 0:
+        return None
+
+    return seconds

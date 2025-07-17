@@ -427,7 +427,7 @@ class CassandraTypeMapper:
             ]:
                 # Nullable dtypes - create with correct nullable type
                 data[col_name] = pd.Series(dtype=dtype)
-            elif dtype == "datetime64[ns]":
+            elif dtype == "datetime64[ns]" or str(dtype) == "datetime64[ns]":
                 # Date columns - use datetime64[ns]
                 data[col_name] = pd.Series(dtype="datetime64[ns]")
             elif dtype == "timedelta64[ns]":
@@ -454,7 +454,8 @@ class CassandraTypeMapper:
                 data[col_name] = pd.Series(CassandraUDTArray([], dtype), dtype=dtype)
             else:
                 # Other dtypes can use standard constructor
-                data[col_name] = pd.Series(dtype=dtype)
+                # Need to pass empty array to avoid pandas trying to infer dtype
+                data[col_name] = pd.Series([], dtype=dtype)
 
         return pd.DataFrame(data)
 

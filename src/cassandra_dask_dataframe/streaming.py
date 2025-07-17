@@ -196,10 +196,6 @@ class CassandraStreamer:
                 if col in columns:
                     expected_columns.append(f"{col}_ttl")
 
-        # print(f"DEBUG stream_token_range: columns={columns}")
-        # print(f"DEBUG stream_token_range: writetime_columns={writetime_columns}")
-        # print(f"DEBUG stream_token_range: expected_columns={expected_columns}")
-
         builder = IncrementalDataFrameBuilder(
             columns=expected_columns,
             chunk_size=fetch_size,

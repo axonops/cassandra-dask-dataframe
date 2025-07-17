@@ -1,5 +1,5 @@
 """
-Test async-cassandra-dataframe with distributed Dask cluster and multi-node Cassandra.
+Test cassandra-dask-dataframe with distributed Dask cluster and multi-node Cassandra.
 
 What this tests:
 ---------------
@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 
 
 class TestCassandraDaskIntegration:
-    """Test async-cassandra-dataframe with distributed Dask and Cassandra."""
+    """Test cassandra-dask-dataframe with distributed Dask and Cassandra."""
 
     @pytest.mark.asyncio
     async def test_distributed_read_basic(self, session, dask_client):

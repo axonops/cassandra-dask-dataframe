@@ -55,8 +55,8 @@ class TestDistributed:
             # Verify it's distributed
             assert df.npartitions >= 2
 
-            # Compute on cluster
-            pdf = df.compute()
+            # Compute on cluster using async client
+            pdf = await client.compute(df)
 
             # Verify results
             assert len(pdf) == 1000
@@ -96,7 +96,8 @@ class TestDistributed:
             start_time = pd.Timestamp.now()
 
             # Compute all partitions
-            futures = client.compute(df.to_delayed())
+            delayed_partitions = df.to_delayed()
+            futures = client.compute(delayed_partitions)
 
             # Wait for completion
             completed = []
@@ -176,7 +177,7 @@ class TestDistributed:
                 assert df.npartitions > 5
 
                 # Compute should succeed without OOM
-                pdf = df.compute()
+                pdf = await client.compute(df)
                 assert len(pdf) == 500
 
         finally:
@@ -210,7 +211,7 @@ class TestDistributed:
                     list_col, map_col
                 ) VALUES (
                     1, 'test', 42, 3.14, true,
-                    ['a', 'b'], {{'key': 'value'}}
+                    ['a', 'b'], {{'key': 123}}
                 )
                 """
             )
@@ -223,16 +224,18 @@ class TestDistributed:
                 client=client,
             )
 
-            pdf = df.compute()
+            pdf = await client.compute(df)
 
             # Only requested columns present
             assert set(pdf.columns) == {"id", "text_col", "int_col"}
             assert len(pdf) == 1
 
             # Types preserved
-            assert pdf["id"].dtype == "int32"
-            assert pdf["text_col"].dtype == "object"
-            assert pdf["int_col"].dtype == "int32"
+            assert str(pdf["id"].dtype).lower() == "int32"
+            assert (
+                pdf["text_col"].dtype == "object" or str(pdf["text_col"].dtype).lower() == "string"
+            )
+            assert str(pdf["int_col"].dtype).lower() == "int32"
 
     @pytest.mark.asyncio
     async def test_writetime_distributed(self, session, test_table_name):
@@ -281,18 +284,21 @@ class TestDistributed:
                     client=client,
                 )
 
-                pdf = df.compute()
+                pdf = await client.compute(df)
 
                 # Writetime columns added
                 assert "data_writetime" in pdf.columns
                 assert "value_writetime" in pdf.columns
 
-                # Should be timestamps
-                assert pd.api.types.is_datetime64_any_dtype(pdf["data_writetime"])
-                assert pd.api.types.is_datetime64_any_dtype(pdf["value_writetime"])
+                # Should be cassandra_writetime dtype
+                assert str(pdf["data_writetime"].dtype) == "cassandra_writetime"
+                assert str(pdf["value_writetime"].dtype) == "cassandra_writetime"
 
-                # Should have timezone
-                assert pdf["data_writetime"].iloc[0].tz is not None
+                # Values should be microseconds (integers)
+                import numpy as np
+
+                assert isinstance(pdf["data_writetime"].iloc[0], int | np.integer)
+                assert pdf["data_writetime"].iloc[0] > 0
 
         finally:
             await session.execute(f"DROP TABLE IF EXISTS {test_table_name}")

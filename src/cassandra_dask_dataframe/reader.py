@@ -20,7 +20,6 @@ from dask.distributed import Client
 from .connection_config import ConnectionConfig
 from .dask_dtype_registration import _ensure_dtypes_registered
 from .dataframe_factory import DataFrameFactory
-from .event_loop_manager import EventLoopManager
 from .filter_processor import FilterProcessor
 from .metadata import TableMetadataExtractor
 from .partition import StreamingPartitionStrategy
@@ -28,7 +27,6 @@ from .partition_reader import PartitionReader
 from .partition_strategy import PartitioningStrategy, TokenRangeGrouper
 from .predicate_pushdown import PredicatePushdownAnalyzer
 from .query_builder import QueryBuilder
-from .serializers import TTLSerializer, WritetimeSerializer
 from .token_ranges import discover_token_ranges
 from .types import CassandraTypeMapper
 
@@ -105,8 +103,6 @@ class CassandraDataFrameReader:
         # Initialize components
         self.metadata_extractor = TableMetadataExtractor(session)
         self.type_mapper = CassandraTypeMapper()
-        self.writetime_serializer = WritetimeSerializer()
-        self.ttl_serializer = TTLSerializer()
         self._token_range_grouper = TokenRangeGrouper()
 
         # Cached metadata
@@ -119,9 +115,6 @@ class CassandraDataFrameReader:
         self._semaphore = None
         if max_concurrent_queries:
             self._semaphore = asyncio.Semaphore(max_concurrent_queries)
-
-        # Create shared executor for Dask
-        self.executor = EventLoopManager.get_loop_runner().executor
 
     async def _ensure_metadata(self):
         """Ensure table metadata is loaded."""
@@ -496,9 +489,14 @@ class CassandraDataFrameReader:
         # Apply intelligent partitioning strategies if requested
         if partition_strategy != "legacy" and use_token_ranges:
             try:
+                # If partition_count is specified and strategy is auto, use fixed strategy
+                effective_strategy = partition_strategy
+                if partition_count and partition_strategy == "auto":
+                    effective_strategy = "fixed"
+
                 partitions = await self._create_grouped_partitions(
                     partitions,
-                    partition_strategy,
+                    effective_strategy,
                     partition_count,
                     target_partition_size_mb,
                     columns,
@@ -599,7 +597,9 @@ class CassandraDataFrameReader:
             # Add serializable connection config instead of objects
             partition_def["connection_config"] = connection_config
             partition_def["keyspace"] = self.keyspace
-            partition_def["table"] = self.table
+            # Don't overwrite table if it's already set (e.g., for grouped partitions)
+            if "table" not in partition_def:
+                partition_def["table"] = self.table
 
             # For token queries, only use partition key columns
             partition_def["primary_key_columns"] = self.table_metadata["partition_key"]
@@ -652,9 +652,7 @@ class CassandraDataFrameReader:
             delayed_partitions.append(delayed)
 
         # Debug
-        # print(f"DEBUG reader._create_dask_dataframe_delayed: Creating {len(partitions)} partitions")
         # if partitions:
-        #     print(f"DEBUG reader: First partition writetime_columns={partitions[0].get('writetime_columns')}")
 
         # Create multi-partition Dask DataFrame
         df = dd.from_delayed(delayed_partitions, meta=meta)
@@ -668,7 +666,6 @@ class CassandraDataFrameReader:
     @classmethod
     def cleanup_executor(cls):
         """Shutdown the shared event loop runner."""
-        EventLoopManager.cleanup()
 
 
 async def read_cassandra_table(

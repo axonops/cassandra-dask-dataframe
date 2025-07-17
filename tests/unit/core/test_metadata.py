@@ -155,6 +155,11 @@ class TestTableMetadataExtractor:
         table_meta.clustering_key = [created_at]
         table_meta.columns = {"user_id": user_id, "created_at": created_at, "data": data}
 
+        # Mock the keyspace metadata with empty user_types
+        keyspace_meta = Mock()
+        keyspace_meta.user_types = {}
+        extractor._cluster.metadata.keyspaces = {"test_ks": keyspace_meta}
+
         result = extractor._process_table_metadata(table_meta)
 
         assert result["keyspace"] == "test_ks"
@@ -328,6 +333,11 @@ class TestTableMetadataExtractor:
         table_meta.partition_key = []
         table_meta.clustering_key = []
         table_meta.columns = {}
+
+        # Mock the keyspace metadata with empty user_types
+        keyspace_meta = Mock()
+        keyspace_meta.user_types = {}
+        extractor._cluster.metadata.keyspaces = {"test_ks": keyspace_meta}
 
         result = extractor._process_table_metadata(table_meta)
 

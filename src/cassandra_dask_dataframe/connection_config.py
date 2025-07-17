@@ -229,11 +229,6 @@ class ConnectionConfig:
             # Override contact points from environment
             contact_points = os.getenv("CASSANDRA_CONTACT_POINTS").split(",")
             kwargs["contact_points"] = contact_points
-            print(f"DEBUG create_cluster: Overriding contact points to: {contact_points}")
-        else:
-            print(
-                f"DEBUG create_cluster: Using configured contact points: {kwargs.get('contact_points', 'default')}"
-            )
 
         # Create and return cluster
         return Cluster(**kwargs)

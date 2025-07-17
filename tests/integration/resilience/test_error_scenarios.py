@@ -1,5 +1,5 @@
 """
-Comprehensive error scenario tests for async-cassandra-dataframe.
+Comprehensive error scenario tests for cassandra-dask-dataframe.
 
 What this tests:
 ---------------

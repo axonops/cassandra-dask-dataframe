@@ -1,4 +1,4 @@
-.PHONY: help install install-dev test test-unit test-integration test-distributed lint format clean docker-up docker-down cassandra-start cassandra-stop cassandra-status cassandra-wait
+.PHONY: help install install-dev build test test-unit test-integration test-distributed test-coverage lint format clean docker-up docker-down cassandra-start cassandra-stop cassandra-status cassandra-wait
 
 # Environment setup
 CONTAINER_RUNTIME ?= $(shell command -v podman >/dev/null 2>&1 && echo podman || echo docker)
@@ -10,10 +10,12 @@ help:
 	@echo "Available commands:"
 	@echo "  install         Install the package"
 	@echo "  install-dev     Install with development dependencies"
+	@echo "  build          Build distribution packages"
 	@echo "  test           Run all tests"
 	@echo "  test-unit      Run unit tests only"
 	@echo "  test-integration Run integration tests"
 	@echo "  test-distributed Run distributed tests with Dask cluster"
+	@echo "  test-coverage  Run unit tests with coverage report"
 	@echo "  lint           Run linters"
 	@echo "  format         Format code"
 	@echo "  clean          Clean build artifacts"
@@ -33,6 +35,10 @@ install:
 install-dev:
 	pip install -e ".[dev,test]"
 
+build: clean
+	pip install build
+	python -m build
+
 test: test-unit test-integration
 
 test-unit:
@@ -46,6 +52,9 @@ test-distributed: cassandra-start cassandra-wait
 	CASSANDRA_CONTACT_POINTS=$(CASSANDRA_CONTACT_POINTS) DASK_SCHEDULER=tcp://localhost:8786 \
 		pytest tests/integration -v -m "distributed"
 	$(MAKE) cassandra-stop
+
+test-coverage:
+	pytest tests/unit --cov=src/cassandra_dask_dataframe --cov-report=html --cov-report=term-missing -v
 
 lint:
 	ruff check src tests

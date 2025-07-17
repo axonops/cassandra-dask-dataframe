@@ -1,5 +1,5 @@
 """
-Comprehensive integration tests for async-cassandra-dataframe.
+Comprehensive integration tests for cassandra-dask-dataframe.
 
 Tests all critical scenarios including:
 - Data types

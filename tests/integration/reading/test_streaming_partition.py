@@ -84,7 +84,7 @@ class TestStreamingPartition:
             await session.execute(f"DROP TABLE IF EXISTS {test_table_name}")
 
     @pytest.mark.asyncio
-    async def test_split_token_ring(self, session):
+    async def test_token_range_discovery(self, session):
         """
         Test token range discovery from cluster.
 
@@ -131,7 +131,7 @@ class TestStreamingPartition:
                     pass  # Some cluster configs may have gaps, so we don't assert
 
     @pytest.mark.asyncio
-    async def test_create_fixed_partitions(self, session, basic_test_table):
+    async def test_fixed_partition_count(self, session, basic_test_table):
         """
         Test fixed partition creation.
 
@@ -176,7 +176,7 @@ class TestStreamingPartition:
             assert partitions[i]["start_token"] >= partitions[i - 1]["end_token"]
 
     @pytest.mark.asyncio
-    async def test_create_adaptive_partitions(self, session, basic_test_table):
+    async def test_adaptive_partition_creation(self, session, basic_test_table):
         """
         Test adaptive partition creation.
 
@@ -282,7 +282,7 @@ class TestStreamingPartition:
             await session.execute(f"DROP TABLE IF EXISTS {test_table_name}")
 
     @pytest.mark.asyncio
-    async def test_stream_partition_token_range(self, session, basic_test_table):
+    async def test_stream_partition_token_range(self, session):
         """
         Test streaming with specific token ranges.
 
@@ -298,33 +298,89 @@ class TestStreamingPartition:
         - Data isolation between workers
         - Correctness of distributed reads
         """
-        from cassandra_dask_dataframe.token_ranges import (
-            discover_token_ranges,
-            split_proportionally,
+        import uuid
+
+        from cassandra_dask_dataframe.token_ranges import discover_token_ranges
+
+        # Create table with UUID primary key for even distribution
+        test_table = "test_stream_token_range"
+        await session.execute(f"DROP TABLE IF EXISTS {test_table}")
+        await session.execute(
+            f"""
+            CREATE TABLE {test_table} (
+                id UUID PRIMARY KEY,
+                name TEXT,
+                value INT
+            )
+            """
         )
 
-        strategy = StreamingPartitionStrategy(session=session)
+        try:
+            # Insert data with UUIDs - these will distribute evenly across token ranges
+            insert_stmt = await session.prepare(
+                f"INSERT INTO {test_table} (id, name, value) VALUES (?, ?, ?)"
+            )
 
-        # Get actual token ranges from cluster
-        ranges = await discover_token_ranges(session, "test_dataframe")
+            # Insert more data to ensure all token ranges get some
+            for i in range(5000):
+                await session.execute(insert_stmt, (uuid.uuid4(), f"name_{i}", i))
 
-        # Split into 4 parts for testing
-        split_ranges = split_proportionally(ranges, 4)
+            # First verify data was inserted
+            result = await session.execute(f"SELECT COUNT(*) FROM {test_table}")
+            count = result.one()[0]
+            print(f"Total rows in table: {count}")
+            assert count == 5000
 
-        # Read first range only
-        first_range = split_ranges[0]
-        partition_def = {
-            "table": f"test_dataframe.{basic_test_table}",
-            "columns": ["id", "name"],
-            "start_token": first_range.start,
-            "end_token": first_range.end,
-            "memory_limit_mb": 128,
-            "primary_key_columns": ["id"],
-        }
+            strategy = StreamingPartitionStrategy(session=session)
 
-        df = await strategy.stream_partition(partition_def)
+            # Get actual token ranges from cluster
+            ranges = await discover_token_ranges(session, "test_dataframe")
 
-        # Should have some data
-        assert len(df) > 0
-        # But not all data (we're reading 1/4 of token range)
-        assert len(df) < 1000
+            print(f"Total ranges from cluster: {len(ranges)}")
+
+            # For testing, find a range that's not at the boundaries
+            # (to avoid edge cases with min/max token values)
+            mid_range = ranges[len(ranges) // 2]
+            print(f"Using middle range: {mid_range.start} to {mid_range.end}")
+            partition_def = {
+                "table": f"test_dataframe.{test_table}",
+                "columns": ["id", "name", "value"],
+                "start_token": mid_range.start,
+                "end_token": mid_range.end,
+                "memory_limit_mb": 128,
+                "primary_key_columns": ["id"],
+                "use_token_ranges": True,
+            }
+
+            df = await strategy.stream_partition(partition_def)
+
+            # Should have some data (with 5000 UUIDs evenly distributed across ~257 ranges)
+            assert len(df) > 0
+            print(f"First range contains {len(df)} rows")
+
+            # But not all data (we're reading 1 of ~257 ranges)
+            assert len(df) < 100  # Should have roughly 5000/257 ≈ 20 rows
+
+            # Verify we got the expected columns
+            assert set(df.columns) == {"id", "name", "value"}
+
+            # Read a few more ranges to verify data distribution
+            total_rows = len(df)
+            ranges_with_data = 1 if len(df) > 0 else 0
+
+            # Check first 10 ranges
+            for i in range(1, min(10, len(ranges))):
+                partition_def["start_token"] = ranges[i].start
+                partition_def["end_token"] = ranges[i].end
+                df_range = await strategy.stream_partition(partition_def)
+                if len(df_range) > 0:
+                    ranges_with_data += 1
+                    total_rows += len(df_range)
+                    print(f"Range {i} contains {len(df_range)} rows")
+
+            # Most ranges should have some data
+            assert ranges_with_data > 5  # At least half of the 10 ranges checked
+            print(f"Found data in {ranges_with_data} out of 10 ranges checked")
+
+        finally:
+            await session.execute(f"DROP TABLE IF EXISTS {test_table}")

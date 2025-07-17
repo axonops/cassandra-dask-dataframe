@@ -47,7 +47,8 @@ class CassandraUDTDtype(ExtensionDtype):
             if "." in content:
                 keyspace, udt_name = content.split(".", 1)
                 return cls(keyspace=keyspace, udt_name=udt_name)
-        return cls()
+        # Don't claim to handle other dtype strings
+        raise TypeError(f"Cannot construct CassandraUDTDtype from string '{string}'")
 
     def __str__(self) -> str:
         """String representation."""

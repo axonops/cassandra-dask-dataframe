@@ -1,259 +1,208 @@
-# cassandra-dask-dataframe
+# 🚀 Cassandra Dask DataFrame
 
-Dask DataFrame integration for Apache Cassandra. Read and process Cassandra data at scale using distributed DataFrames with full support for Dask clusters.
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+[![Python Version](https://img.shields.io/badge/python-3.9%2B-blue)](https://www.python.org/downloads/)
+[![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
+[![Imports: isort](https://img.shields.io/badge/%20imports-isort-%231674b1?style=flat&labelColor=ef8336)](https://pycqa.github.io/isort/)
+[![Checked with mypy](https://img.shields.io/badge/mypy-checked-blue)](http://mypy-lang.org/)
 
-## Features
+> ⚠️ **In Development**: This library is under active development. APIs may change, and you may encounter edge cases. We welcome your feedback and contributions!
 
-- **True Distributed Execution**: Each Dask worker creates its own Cassandra connection for parallel reads
-- **Streaming/Adaptive Partitioning**: No need to estimate data sizes upfront - partitions are created dynamically based on memory constraints
-- **Distributed Processing**: Leverages Dask for parallel processing across multiple workers
-- **Memory Safety**: Configurable memory limits per partition prevent OOM errors
-- **Comprehensive Type Support**: All Cassandra types including collections, UDTs, and special types
-- **Metadata Queries**: Built-in support for WRITETIME and TTL queries
-- **Production Ready**: Extensive testing, proper error handling, and memory management
+## 🎯 What is This?
 
-## Installation
+**cassandra-dask-dataframe** bridges Apache Cassandra© and Dask, enabling you to read and process massive Cassandra tables using distributed DataFrames. It intelligently aligns Dask partitions with Cassandra token ranges for optimal data locality and performance.
+
+## 🤔 Why Do You Need This?
+
+### The Problem
+
+Working with large Cassandra tables in Python is challenging:
+- 📊 **Too Big for Memory**: Tables with billions of rows won't fit in pandas
+- 🐌 **Slow Sequential Processing**: Reading everything through one connection is inefficient
+- 🔄 **No Native Distribution**: Standard drivers don't parallelize across the cluster
+- 💾 **Memory Management**: Easy to OOM when processing large results
+
+### The Solution
+
+This library solves these problems by:
+- 🎛️ **Distributed Processing**: Leverages Dask to process data across multiple workers
+- 🗂️ **Smart Partitioning**: Aligns partitions with Cassandra's token ranges
+- 🌊 **Streaming Reads**: Memory-bounded streaming prevents OOM errors
+- ⚡ **Parallel Connections**: Each worker connects directly to Cassandra
+- 🧮 **Familiar API**: Use pandas-like operations on massive datasets
+
+## 📚 Understanding Dask
+
+[Dask](https://www.dask.org/) is a flexible parallel computing library for Python that scales pandas, NumPy, and scikit-learn workflows to larger datasets.
+
+### Local vs Distributed Mode
+
+#### 🖥️ Local Mode
+- Runs on your laptop/single machine
+- Uses threads/processes for parallelism
+- Great for development and moderate datasets
+- No setup required
+
+```python
+# Local mode - Dask runs on your machine
+df = await cdf.read_cassandra_table('my_table', session=session)
+result = df.groupby('category').mean().compute()  # Runs locally
+```
+
+#### 🌐 Distributed Mode
+- Runs across multiple machines
+- Dedicated scheduler and workers
+- Handles massive datasets
+- Requires cluster setup
+
+```python
+# Distributed mode - Dask runs on a cluster
+from dask.distributed import Client
+
+async with Client('scheduler:8786') as client:
+    df = await cdf.read_cassandra_table('my_table', session=session)
+    result = await client.compute(df.groupby('category').mean())  # Runs distributed
+```
+
+## 🔧 How It Works
+
+### 🎯 Token Range Alignment
+
+Cassandra distributes data across nodes using token ranges. This library aligns Dask partitions with these ranges for optimal performance:
+
+```mermaid
+graph LR
+    subgraph Cassandra Cluster
+        N1[Node 1<br/>Token Range: -9223... to -6148...]
+        N2[Node 2<br/>Token Range: -6148... to -3074...]
+        N3[Node 3<br/>Token Range: -3074... to 0]
+        N4[Node 4<br/>Token Range: 0 to 3074...]
+    end
+
+    subgraph Dask Workers
+        W1[Worker 1<br/>Reads from Node 1]
+        W2[Worker 2<br/>Reads from Node 2]
+        W3[Worker 3<br/>Reads from Node 3]
+        W4[Worker 4<br/>Reads from Node 4]
+    end
+
+    N1 -.->|Direct Read| W1
+    N2 -.->|Direct Read| W2
+    N3 -.->|Direct Read| W3
+    N4 -.->|Direct Read| W4
+```
+
+Benefits of this approach:
+- ✅ **Data Locality**: Workers read from nearby nodes
+- ✅ **No Duplicates**: Token ranges don't overlap
+- ✅ **Perfect Coverage**: All data is read exactly once
+- ✅ **Natural Parallelism**: Leverages Cassandra's distribution
+
+### 🌊 Memory-Bounded Streaming
+
+Instead of loading entire partitions into memory, we stream data in controlled chunks:
+
+1. **Sample** data to estimate row sizes
+2. **Calculate** how many rows fit in memory limit
+3. **Stream** data in batches up to that limit
+4. **Build** DataFrame incrementally
+5. **Monitor** memory usage continuously
+
+## 🚦 Quick Start
+
+### Installation
 
 ```bash
 pip install cassandra-dask-dataframe
 ```
 
-## Quick Start
+### Basic Usage
 
 ```python
 import asyncio
 from async_cassandra import AsyncCluster
 import cassandra_dask_dataframe as cdf
 
-async def main():
+async def analyze_large_table():
     # Connect to Cassandra
-    async with AsyncCluster(['localhost']) as cluster:
+    async with AsyncCluster(['cassandra-node1', 'cassandra-node2']) as cluster:
         async with cluster.connect() as session:
+            await session.set_keyspace('my_keyspace')
+
             # Read table as Dask DataFrame
             df = await cdf.read_cassandra_table(
-                'myks.users',
+                'large_events_table',
                 session=session,
-                memory_per_partition_mb=128  # Memory limit per partition
+                memory_per_partition_mb=256  # Control memory usage
             )
 
             # Perform distributed operations
-            result = await df.groupby('country').size().compute()
+            daily_stats = (
+                df[df.status == 'success']
+                .groupby(df.timestamp.dt.date)
+                .agg({'value': ['sum', 'mean', 'count']})
+            )
+
+            # Compute results
+            result = daily_stats.compute()
             print(result)
 
-asyncio.run(main())
+asyncio.run(analyze_large_table())
 ```
 
-## Key Concepts
+## 📖 Usage Examples
 
-### Streaming/Adaptive Approach
+> 🚧 **Coming Soon**: Detailed usage examples and tutorials are in development. For now, see the Quick Start above.
 
-Unlike traditional approaches that require knowing data sizes upfront, this library uses a streaming approach:
+<!-- Placeholder for future examples:
+- Column selection and projection
+- Writetime and TTL queries
+- Predicate pushdown
+- Custom partitioning strategies
+- Working with User Defined Types
+- Distributed cluster setup
+- Performance tuning
+-->
 
-```python
-# No need to specify partition sizes or counts
-df = await cdf.read_cassandra_table(
-    'large_table',
-    session=session,
-    memory_per_partition_mb=256  # Just set memory limit
-)
-```
+## 🏗️ Development
 
-The library will:
-1. Sample data to estimate row sizes
-2. Create partitions that fit within memory limits
-3. Stream data in memory-bounded chunks
-4. Handle tables of any size without configuration
+See [DEVELOPMENT.md](DEVELOPMENT.md) for:
+- Setting up your development environment
+- Running tests
+- Contributing guidelines
+- Architecture details
 
-### Memory Management
+## 📐 Architecture
 
-Control memory usage per partition:
+See [ARCHITECTURE.md](ARCHITECTURE.md) for deep dives into:
+- Token range alignment algorithm
+- Partitioning strategies
+- Type system design
+- Distributed execution model
 
-```python
-# For large rows, use smaller partitions
-df = await cdf.read_cassandra_table(
-    'table_with_large_rows',
-    session=session,
-    memory_per_partition_mb=64  # Smaller partitions
-)
+## 🤝 Contributing
 
-# For small rows, use larger partitions
-df = await cdf.read_cassandra_table(
-    'table_with_small_rows',
-    session=session,
-    memory_per_partition_mb=512  # Larger partitions
-)
-```
+We welcome contributions! This project uses:
+- Apache 2.0 License
+- Contributor License Agreement (CLA) for contributions
+- Test-Driven Development (TDD)
+- Comprehensive CI/CD pipeline
 
-### Distributed Execution
+Please read [DEVELOPMENT.md](DEVELOPMENT.md) before contributing.
 
-The library automatically detects when running on a Dask cluster and creates Cassandra connections on each worker:
+## 📝 License
 
-```python
-from dask.distributed import Client
-from cassandra_dask_dataframe import CassandraDataFrameReader
-from cassandra_dask_dataframe.connection_config import ConnectionConfig
+This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
 
-# Create connection config (serializable)
-config = ConnectionConfig(
-    contact_points=['cassandra-node1', 'cassandra-node2'],
-    port=9042,
-    auth_provider_class='PlainTextAuthProvider',
-    auth_provider_args={'username': 'user', 'password': 'pass'}
-)
+## 🙏 Acknowledgments
 
-# Connect to Dask cluster
-with Client('scheduler-address:8786') as client:
-    # Create reader with connection config
-    reader = CassandraDataFrameReader(
-        session=session,  # Only used for metadata
-        table='large_table',
-        connection_config=config  # Workers will use this
-    )
+Built on top of these excellent projects:
+- [async-cassandra](https://github.com/axonops/async-cassandra) - Async Cassandra driver
+- [Dask](https://www.dask.org/) - Distributed computing framework
+- [Apache Cassandra©](https://cassandra.apache.org/) - The database we all love
 
-    # Read distributed - each worker connects to Cassandra
-    df = await reader.read(
-        partition_count=100  # Spread across workers
-    )
+---
 
-    # Operations run distributed
-    result = df.groupby('category').agg({'value': 'sum'}).compute()
-```
-
-Each worker:
-1. Receives partition definitions with connection config
-2. Creates its own Cassandra connection
-3. Reads its assigned token ranges
-4. Returns DataFrame partitions
-
-## Advanced Usage
-
-### Column Selection
-
-Read only specific columns to reduce memory and network usage:
-
-```python
-df = await cdf.read_cassandra_table(
-    'users',
-    session=session,
-    columns=['id', 'name', 'email']
-)
-```
-
-### Writetime and TTL Queries
-
-Access Cassandra metadata columns:
-
-```python
-# Get writetime for specific columns
-df = await cdf.read_cassandra_table(
-    'audit_log',
-    session=session,
-    writetime_columns=['data', 'status']
-)
-
-# Get TTL for cache management
-df = await cdf.read_cassandra_table(
-    'cache_table',
-    session=session,
-    ttl_columns=['cache_data']
-)
-
-# Use wildcard for all eligible columns
-df = await cdf.read_cassandra_table(
-    'events',
-    session=session,
-    writetime_columns=['*']  # All non-PK columns
-)
-```
-
-### Partition Control
-
-Override adaptive partitioning when needed:
-
-```python
-# Fixed partition count
-df = await cdf.read_cassandra_table(
-    'predictable_table',
-    session=session,
-    partition_count=10  # Exactly 10 partitions
-)
-```
-
-### Filtering
-
-Apply simple filters (executed in Dask, not Cassandra):
-
-```python
-df = await cdf.read_cassandra_table(
-    'events',
-    session=session,
-    filter_expr='timestamp > "2024-01-01"'
-)
-```
-
-## Type Mapping
-
-Cassandra types are mapped to appropriate pandas dtypes:
-
-| Cassandra Type | Pandas Type | Notes |
-|----------------|-------------|--------|
-| `int`, `smallint`, `tinyint`, `bigint` | `int8/16/32/64` | Size-appropriate |
-| `float`, `double` | `float32/64` | Precision preserved |
-| `decimal` | `object` (Decimal) | Full precision |
-| `text`, `varchar`, `ascii` | `object` (str) | |
-| `timestamp` | `datetime64[ns, UTC]` | Always UTC |
-| `date` | `datetime64[ns]` | |
-| `time` | `timedelta64[ns]` | |
-| `boolean` | `bool` | |
-| `blob` | `object` (bytes) | |
-| `uuid`, `timeuuid` | `object` (UUID) | |
-| `list`, `set` | `object` (list) | Sets become lists |
-| `map` | `object` (dict) | |
-| Empty collections | `None` | Cassandra behavior |
-
-## Performance Considerations
-
-1. **Memory Limits**: Set based on your worker memory and row sizes
-2. **Partition Count**: More partitions = more parallelism but also more overhead
-3. **Column Selection**: Always select only needed columns
-4. **Network**: Large results require good network between Cassandra and Dask workers
-
-## Testing
-
-The library includes comprehensive tests:
-
-```bash
-# Run all tests
-make test
-
-# Run specific test suites
-make test-unit        # Unit tests only
-make test-integration # Integration tests (requires Cassandra)
-make test-distributed # Distributed tests (requires Dask cluster)
-```
-
-## Docker Compose Testing
-
-Test with a full distributed environment:
-
-```bash
-# Start Cassandra and Dask cluster
-docker-compose -f docker-compose.test.yml up -d
-
-# Run distributed tests
-make test-distributed
-
-# Cleanup
-docker-compose -f docker-compose.test.yml down
-```
-
-## Contributing
-
-1. Follow TDD - write tests first
-2. Ensure all tests pass including distributed tests
-3. Follow the code style (black, isort, ruff)
-4. Update documentation for new features
-
-## License
-
-Same as async-cassandra project.
+<div align="center">
+Made with ❤️ for the Cassandra community
+</div>

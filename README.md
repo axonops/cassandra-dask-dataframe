@@ -35,6 +35,30 @@ This library solves these problems by:
 
 [Dask](https://www.dask.org/) is a flexible parallel computing library for Python that scales pandas, NumPy, and scikit-learn workflows to larger datasets.
 
+### Why Dask for Memory Efficiency?
+
+Dask provides powerful memory management features that make it ideal for processing datasets larger than available RAM, even on a single machine:
+
+#### 🧠 Out-of-Core Computing
+Dask can process datasets larger than memory by:
+- **Lazy Evaluation**: Operations are queued but not executed until explicitly triggered with `.compute()` or `.persist()` ([docs](https://docs.dask.org/en/stable/dataframe.html))
+- **Automatic Spilling**: When memory usage exceeds 60% of available RAM, Dask automatically spills least-recently-used data to disk ([docs](https://distributed.dask.org/en/stable/worker-memory.html))
+- **Streaming Processing**: Data is processed in chunks that fit in memory, avoiding loading entire datasets at once
+
+#### 💾 Memory Management Thresholds
+Dask workers implement sophisticated memory management ([docs](https://distributed.dask.org/en/stable/worker-memory.html)):
+- **60% memory**: Start spilling to disk
+- **70% memory**: Aggressive spilling based on process memory
+- **80% memory**: Pause new task execution
+- **95% memory**: Worker restart to prevent system crashes
+
+#### 🔄 Smart Data Handling
+- **Partitioned Processing**: Data is split into smaller chunks (partitions) that can be processed independently
+- **Reference Counting**: Completed results are cleared from memory as soon as they're no longer needed ([docs](https://distributed.dask.org/en/stable/memory.html))
+- **Efficient Storage**: Results stay distributed across workers until explicitly gathered with `.compute()`
+
+This means you can work with a 100GB dataset on a laptop with 16GB RAM - Dask will intelligently manage memory, spill to disk when needed, and process data in chunks that fit comfortably in available memory.
+
 ### Local vs Distributed Mode
 
 #### 🖥️ Local Mode
